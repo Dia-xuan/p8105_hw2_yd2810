@@ -14,6 +14,8 @@ library(readr)
 library(dplyr)
 library(tidyr)
 library(lubridate)
+library(readxl)
+library(janitor)
 ```
 
 
@@ -96,3 +98,109 @@ y_max <- max(final$year)
 
 The resulting dataset has `r nrow(final)` rows (observations) and `r ncol(final)` variables, covering `r min(final$year)` to `r max(final$year)`. The key variables are `r paste(c("year","month","president","close","unemployment"), collapse = ", ")`.
 
+## Problem 2
+
+Read and clean the Mr. Trash Wheel sheet:
+specify the sheet in the Excel file and to omit non-data entries (rows with notes / figures; columns containing notes) using arguments in read_excel
+use reasonable variable names
+omit rows that do not include dumpster-specific data
+round the number of sports balls to the nearest integer and converts the result to an integer variable (using as.integer)
+
+```{r}
+path_tw <- file.path("data","202509 Trash Wheel Collection Data.xlsx")
+mr <- read_excel(
+  path_tw,
+  sheet = "Mr. Trash Wheel",
+  skip = 1
+) %>% 
+  select(where(~ !all(is.na(.)))) %>% 
+  slice(-n()) %>% 
+  clean_names() %>% 
+  mutate(sports_balls = as.integer(round(sports_balls, 0)))
+
+```
+
+Use a similar process to import, clean, and organize the data for Professor Trash Wheel and Gwynnda, and combine this with the Mr. Trash Wheel dataset to produce a single tidy dataset. To keep track of which Trash Wheel is which, you may need to add an additional variable to both datasets before combining.
+
+```{r}
+professor <- read_excel(
+  path_tw,
+  sheet = "Professor Trash Wheel",
+  skip = 1
+) %>% 
+  select(where(~ !all(is.na(.)))) %>% 
+  slice(-n()) %>% 
+  clean_names()
+
+Gwynnda <- read_excel(
+  path_tw,
+  sheet = "Gwynns Falls Trash Wheel",
+  skip = 1
+) %>% 
+  select(where(~ !all(is.na(.)))) %>% 
+  slice(-n()) %>% 
+  clean_names()
+```
+
+
+```{r}
+mr <- mr %>%
+  mutate(
+    date = as.Date(date),
+    year = as.integer(year),
+    month = as.character(month),
+    wheel = "Mr. Trash Wheel"
+  ) %>%
+  filter(!is.na(dumpster))
+
+professor <- professor %>%
+  mutate(
+    date = as.Date(date),
+    year = as.integer(year),
+    month = as.character(month),
+    wheel = "Professor Trash Wheel"
+  ) %>%
+  filter(!is.na(dumpster))
+
+Gwynnda <- Gwynnda %>%
+  mutate(
+    date = as.Date(date),
+    year = as.integer(year),
+    month = as.character(month),
+    wheel = "Gwynnda"
+  ) %>%
+  filter(!is.na(dumpster))
+
+trash_all <- dplyr::bind_rows(mr, professor, Gwynnda) %>%
+  select(wheel, dumpster, date, year, month, weight_tons, volume_cubic_yards,
+         plastic_bottles, polystyrene, cigarette_butts, glass_bottles,
+         sports_balls, dplyr::everything())
+
+```
+
+
+Write a paragraph about these data; you are encouraged to use inline R. Be sure to note the number of observations in the resulting dataset, and give examples of key variables. For available data, what was the total weight of trash collected by Professor Trash Wheel? What was the total number of cigarette butts collected by Gwynnda in June of 2022?
+
+```{r}
+prof_total_weight_tons <-
+  trash_all %>% 
+  filter(wheel == "Professor Trash Wheel") %>% 
+  summarise(total = sum(weight_tons, na.rm = TRUE)) %>% 
+  pull(total)
+
+gwynnda_cigs_jun2022 <-
+  trash_all %>% 
+  filter(wheel == "Gwynnda",
+         year(date) == 2022,
+         month(date) == 6) %>% 
+  summarise(total = sum(cigarette_butts, na.rm = TRUE)) %>% 
+  pull(total)
+
+```
+
+
+The resulting dataset contains `r nrow(trash_all)` observations. Key variables include `r trash_all$wheel`,`r trash_all$dumpster` and `r trash_all$date`...Including information of pickup dates, dumpster IDs, total weight (tons), volume (cubic yards), and item counts such as cigarette butts and sports balls.
+
+For the available data, Professor Trash Wheel collected a total of `r round(prof_total_weight, 1)` tons of trash, and Gwynnda collected `r gwynnda_cigs_jun2022` cigarette butts in June 2022.
+
+## Problem 3
