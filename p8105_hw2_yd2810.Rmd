@@ -207,16 +207,126 @@ For the available data, Professor Trash Wheel collected a total of `r prof_total
 
 ```{r}
 path_zori    <- file.path("data", "Zip_zori_uc_sfrcondomfr_sm_month_NYC.csv")            
-path_zipmeta <- file.path("data", "Zip Codes.csv")
+path_zipmeta <- file.path("data", "Zip Codes.csv") 
 ```
 
 Create a single, well-organized dataset with all the information contained in these data files. To that end: import, clean, tidy, and otherwise wrangle each of these datasets; check for completeness and correctness across datasets (e.g. by viewing individual datasets and monitoring warning messages); merge to create a single, final dataset; and organize this so that variables and observations are in meaningful orders.
 
-Briefly describe the resulting tidy dataset. How many total observations exist? How many unique ZIP codes are included, and how many unique neighborhoods?
+```{r}
+zori_raw <- read_csv(path_zori) 
+zip_raw <- read_csv(path_zipmeta)%>% clean_names() %>% 
+  rename(zip = zip_code) %>% 
+  mutate(zip = as.character(zip)) %>% 
+  select(everything(),-file_date)
+```
+I removed constant (single-valued) variables — `RegionType`, `StateName`, `State`, `City`, and `Metro`.
 
-Which ZIP codes appear in the ZIP code dataset but not in the Zillow Rental Price dataset? Using a few illustrative examples discuss why these ZIP codes might be excluded from the Zillow dataset.
+```{r}
+long_demo <- zori_raw %>% 
+  pivot_longer(
+    cols = 10:last_col(),
+    names_to = "date",
+    values_to = "zori",
+    values_drop_na = TRUE
+  ) %>% 
+  rename(zip = RegionName) %>% 
+  mutate(date = as.Date(date),
+         zip = as.character(zip)) %>% 
+  select(everything(),-RegionType,-StateName,-State,-City,-Metro)
+```
+
+```{r}
+
+zips_zori  <- long_demo %>%  distinct(zip)
+zips_meta  <- zip_raw   %>%  distinct(zip)
+
+only_in_meta <- anti_join(zips_meta, zips_zori, by = "zip")
+
+only_in_zori <- anti_join(zips_zori, zips_meta, by = "zip")
+
+nrow(zips_zori); nrow(zips_meta)
+nrow(only_in_meta); nrow(only_in_zori)
+```
+```{r}
+zip_dups <- zip_raw %>%
+  count(zip, name = "n") %>%
+  filter(n > 1) %>%
+  arrange(zip)
+
+zip_dups
+```
+
+```{r}
+dup_rows <- zip_raw %>%
+  semi_join(zip_dups, by = "zip") %>%
+  arrange(zip)
+
+dup_rows
+```
+Two groups of same-zip-code. Both seem unreasonable. Delete two false observations.
+
+```{r}
+false_pairs <- tribble(
+  ~zip,~county,
+  "10463", "New York",
+  "11201", "New York"
+)
+
+zip <- zip_raw %>% 
+  anti_join(false_pairs, by = c("zip", "county")) %>% 
+  mutate(
+    borough = case_when(
+      county == "Kings"    ~ "Brooklyn",
+      county == "Queens"   ~ "Queens",
+      county == "New York" ~ "Manhattan",
+      county == "Bronx"    ~ "Bronx",
+      county == "Richmond" ~ "Staten Island"))%>%
+  select(zip, borough, county, neighborhood)
+  
+```
+
+```{r}
+zori_zip <- long_demo %>% 
+  inner_join(zip,by = "zip") %>% 
+  relocate(zip, borough, neighborhood, county, date, zori) %>%
+  arrange(zip, date)
+```
+
+Answer:
+The final tidy dataset zori_zip contains `r nrow(zori_zip)` observations and `r ncol(zori_zip)`. It includes `r n_distinct(zori_zip$zip)` unique ZIP codes and `r n_distinct(zori_zip$neighborhood)` unique neighborhoods across the five NYC boroughs. Key variables are zip, borough, neighborhood, date, and zori (the Zillow Observed Rent Index).
+
+```{r}
+zips_only_in_meta <- zip %>%
+  distinct(zip) %>%
+  anti_join(long_demo %>% distinct(zip), by = "zip")
+
+zips_only_in_meta$zip           
+
+examples_meta_only <- zip %>%
+  semi_join(zips_only_in_meta, by = "zip") %>%
+  distinct(zip, borough, county, neighborhood) %>%
+  arrange(zip)
+
+head(examples_meta_only, 10)
+```
+There are `r nrow(zips_only_in_meta)` zip codes that only appear in the Zip code dataset. 
+Reasons may include: 1. Some ZIP codes may cover government facilities, parks, or campuses etc. with no market rental activity.
+2. A ZIP that overlaps multiple neighborhoods or has ambiguous residential coverage can be excluded.
+
 
 Rental prices fluctuated dramatically during the COVID-19 pandemic. For all available ZIP codes, compare rental prices in January 2021 to prices in January 2020. Make a table that shows the 10 ZIP codes (along with the borough and neighborhood) with largest drop in price from January 2020 to 2021. Comment.
 
+```{r}
+jan_drop <- zori_zip %>%
+  filter(month(date) == 1, year(date) %in% c(2020, 2021)) %>%
+  mutate(yr = year(date)) %>%
+  select(zip, borough, neighborhood, yr, zori) %>%
+  distinct() %>%
+  pivot_wider(names_from = yr, values_from = zori, names_prefix = "zori_") %>%
+  filter(!is.na(zori_2020), !is.na(zori_2021)) %>%
+  mutate(change_2021_vs_2020 = zori_2021 - zori_2020) %>%
+  arrange(change_2021_vs_2020) %>%    
+  slice_head(n = 10)
+```
 
-
+The 10 largest drops are all in Manhattan, concentrated in Lower Manhattan, Lower East Side, Gramercy/Murray Hill, and Greenwich Village/SoHo.

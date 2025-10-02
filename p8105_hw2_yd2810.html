@@ -11,7 +11,7 @@
 
 <meta name="author" content="Yaxuan Deng" />
 
-<meta name="date" content="2025-10-01" />
+<meta name="date" content="2025-10-02" />
 
 <title>p8105_hw2_yd2810</title>
 
@@ -352,7 +352,7 @@ display: none;
 
 <h1 class="title toc-ignore">p8105_hw2_yd2810</h1>
 <h4 class="author">Yaxuan Deng</h4>
-<h4 class="date">2025-10-01</h4>
+<h4 class="date">2025-10-02</h4>
 
 </div>
 
@@ -592,7 +592,7 @@ June 2022.</p>
 <div id="problem-3" class="section level2">
 <h2>Problem 3</h2>
 <pre class="r"><code>path_zori    &lt;- file.path(&quot;data&quot;, &quot;Zip_zori_uc_sfrcondomfr_sm_month_NYC.csv&quot;)            
-path_zipmeta &lt;- file.path(&quot;data&quot;, &quot;Zip Codes.csv&quot;)</code></pre>
+path_zipmeta &lt;- file.path(&quot;data&quot;, &quot;Zip Codes.csv&quot;) </code></pre>
 <p>Create a single, well-organized dataset with all the information
 contained in these data files. To that end: import, clean, tidy, and
 otherwise wrangle each of these datasets; check for completeness and
@@ -600,17 +600,169 @@ correctness across datasets (e.g. by viewing individual datasets and
 monitoring warning messages); merge to create a single, final dataset;
 and organize this so that variables and observations are in meaningful
 orders.</p>
-<p>Briefly describe the resulting tidy dataset. How many total
-observations exist? How many unique ZIP codes are included, and how many
-unique neighborhoods?</p>
-<p>Which ZIP codes appear in the ZIP code dataset but not in the Zillow
-Rental Price dataset? Using a few illustrative examples discuss why
-these ZIP codes might be excluded from the Zillow dataset.</p>
+<pre class="r"><code>zori_raw &lt;- read_csv(path_zori) </code></pre>
+<pre><code>## Rows: 149 Columns: 125
+## ── Column specification ────────────────────────────────────────────────────────
+## Delimiter: &quot;,&quot;
+## chr   (6): RegionType, StateName, State, City, Metro, CountyName
+## dbl (119): RegionID, SizeRank, RegionName, 2015-01-31, 2015-02-28, 2015-03-3...
+## 
+## ℹ Use `spec()` to retrieve the full column specification for this data.
+## ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.</code></pre>
+<pre class="r"><code>zip_raw &lt;- read_csv(path_zipmeta)%&gt;% clean_names() %&gt;% 
+  rename(zip = zip_code) %&gt;% 
+  mutate(zip = as.character(zip)) %&gt;% 
+  select(everything(),-file_date)</code></pre>
+<pre><code>## Rows: 322 Columns: 7
+## ── Column specification ────────────────────────────────────────────────────────
+## Delimiter: &quot;,&quot;
+## chr (4): County, County Code, File Date, Neighborhood
+## dbl (3): State FIPS, County FIPS, ZipCode
+## 
+## ℹ Use `spec()` to retrieve the full column specification for this data.
+## ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.</code></pre>
+<p>I removed constant (single-valued) variables —
+<code>RegionType</code>, <code>StateName</code>, <code>State</code>,
+<code>City</code>, and <code>Metro</code>.</p>
+<pre class="r"><code>long_demo &lt;- zori_raw %&gt;% 
+  pivot_longer(
+    cols = 10:last_col(),
+    names_to = &quot;date&quot;,
+    values_to = &quot;zori&quot;,
+    values_drop_na = TRUE
+  ) %&gt;% 
+  rename(zip = RegionName) %&gt;% 
+  mutate(date = as.Date(date),
+         zip = as.character(zip)) %&gt;% 
+  select(everything(),-RegionType,-StateName,-State,-City,-Metro)</code></pre>
+<pre class="r"><code>zips_zori  &lt;- long_demo %&gt;%  distinct(zip)
+zips_meta  &lt;- zip_raw   %&gt;%  distinct(zip)
+
+only_in_meta &lt;- anti_join(zips_meta, zips_zori, by = &quot;zip&quot;)
+
+only_in_zori &lt;- anti_join(zips_zori, zips_meta, by = &quot;zip&quot;)
+
+nrow(zips_zori); nrow(zips_meta)</code></pre>
+<pre><code>## [1] 149</code></pre>
+<pre><code>## [1] 320</code></pre>
+<pre class="r"><code>nrow(only_in_meta); nrow(only_in_zori)</code></pre>
+<pre><code>## [1] 171</code></pre>
+<pre><code>## [1] 0</code></pre>
+<pre class="r"><code>zip_dups &lt;- zip_raw %&gt;%
+  count(zip, name = &quot;n&quot;) %&gt;%
+  filter(n &gt; 1) %&gt;%
+  arrange(zip)
+
+zip_dups</code></pre>
+<pre><code>## # A tibble: 2 × 2
+##   zip       n
+##   &lt;chr&gt; &lt;int&gt;
+## 1 10463     2
+## 2 11201     2</code></pre>
+<pre class="r"><code>dup_rows &lt;- zip_raw %&gt;%
+  semi_join(zip_dups, by = &quot;zip&quot;) %&gt;%
+  arrange(zip)
+
+dup_rows</code></pre>
+<pre><code>## # A tibble: 4 × 6
+##   county   state_fips county_code county_fips zip   neighborhood             
+##   &lt;chr&gt;         &lt;dbl&gt; &lt;chr&gt;             &lt;dbl&gt; &lt;chr&gt; &lt;chr&gt;                    
+## 1 Bronx            36 005               36005 10463 Kingsbridge and Riverdale
+## 2 New York         36 061               36061 10463 Kingsbridge and Riverdale
+## 3 Kings            36 047               36047 11201 Northwest Brooklyn       
+## 4 New York         36 061               36061 11201 Northwest Brooklyn</code></pre>
+<p>Two groups of same-zip-code. Both seem unreasonable. Delete two false
+observations.</p>
+<pre class="r"><code>false_pairs &lt;- tribble(
+  ~zip,~county,
+  &quot;10463&quot;, &quot;New York&quot;,
+  &quot;11201&quot;, &quot;New York&quot;
+)
+
+zip &lt;- zip_raw %&gt;% 
+  anti_join(false_pairs, by = c(&quot;zip&quot;, &quot;county&quot;)) %&gt;% 
+  mutate(
+    borough = case_when(
+      county == &quot;Kings&quot;    ~ &quot;Brooklyn&quot;,
+      county == &quot;Queens&quot;   ~ &quot;Queens&quot;,
+      county == &quot;New York&quot; ~ &quot;Manhattan&quot;,
+      county == &quot;Bronx&quot;    ~ &quot;Bronx&quot;,
+      county == &quot;Richmond&quot; ~ &quot;Staten Island&quot;))%&gt;%
+  select(zip, borough, county, neighborhood)</code></pre>
+<pre class="r"><code>zori_zip &lt;- long_demo %&gt;% 
+  inner_join(zip,by = &quot;zip&quot;) %&gt;% 
+  relocate(zip, borough, neighborhood, county, date, zori) %&gt;%
+  arrange(zip, date)</code></pre>
+<p>Answer: The final tidy dataset zori_zip contains 10450 observations
+and 9. It includes 149 unique ZIP codes and 43 unique neighborhoods
+across the five NYC boroughs. Key variables are zip, borough,
+neighborhood, date, and zori (the Zillow Observed Rent Index).</p>
+<pre class="r"><code>zips_only_in_meta &lt;- zip %&gt;%
+  distinct(zip) %&gt;%
+  anti_join(long_demo %&gt;% distinct(zip), by = &quot;zip&quot;)
+
+zips_only_in_meta$zip           </code></pre>
+<pre><code>##   [1] &quot;10464&quot; &quot;10474&quot; &quot;10475&quot; &quot;10499&quot; &quot;10550&quot; &quot;10704&quot; &quot;10705&quot; &quot;10803&quot; &quot;11202&quot;
+##  [10] &quot;11224&quot; &quot;11239&quot; &quot;11241&quot; &quot;11242&quot; &quot;11243&quot; &quot;11245&quot; &quot;11247&quot; &quot;11251&quot; &quot;11252&quot;
+##  [19] &quot;11256&quot; &quot;10008&quot; &quot;10020&quot; &quot;10041&quot; &quot;10043&quot; &quot;10045&quot; &quot;10047&quot; &quot;10048&quot; &quot;10055&quot;
+##  [28] &quot;10072&quot; &quot;10080&quot; &quot;10081&quot; &quot;10082&quot; &quot;10087&quot; &quot;10101&quot; &quot;10102&quot; &quot;10103&quot; &quot;10104&quot;
+##  [37] &quot;10105&quot; &quot;10106&quot; &quot;10107&quot; &quot;10108&quot; &quot;10109&quot; &quot;10110&quot; &quot;10111&quot; &quot;10112&quot; &quot;10113&quot;
+##  [46] &quot;10114&quot; &quot;10115&quot; &quot;10116&quot; &quot;10117&quot; &quot;10118&quot; &quot;10119&quot; &quot;10120&quot; &quot;10121&quot; &quot;10122&quot;
+##  [55] &quot;10123&quot; &quot;10124&quot; &quot;10125&quot; &quot;10126&quot; &quot;10129&quot; &quot;10130&quot; &quot;10131&quot; &quot;10132&quot; &quot;10133&quot;
+##  [64] &quot;10138&quot; &quot;10149&quot; &quot;10150&quot; &quot;10151&quot; &quot;10152&quot; &quot;10153&quot; &quot;10154&quot; &quot;10155&quot; &quot;10156&quot;
+##  [73] &quot;10157&quot; &quot;10158&quot; &quot;10159&quot; &quot;10160&quot; &quot;10161&quot; &quot;10163&quot; &quot;10164&quot; &quot;10165&quot; &quot;10166&quot;
+##  [82] &quot;10167&quot; &quot;10168&quot; &quot;10169&quot; &quot;10170&quot; &quot;10171&quot; &quot;10172&quot; &quot;10173&quot; &quot;10174&quot; &quot;10175&quot;
+##  [91] &quot;10176&quot; &quot;10177&quot; &quot;10178&quot; &quot;10179&quot; &quot;10185&quot; &quot;10197&quot; &quot;10199&quot; &quot;10213&quot; &quot;10242&quot;
+## [100] &quot;10249&quot; &quot;10256&quot; &quot;10259&quot; &quot;10260&quot; &quot;10261&quot; &quot;10265&quot; &quot;10268&quot; &quot;10269&quot; &quot;10270&quot;
+## [109] &quot;10271&quot; &quot;10272&quot; &quot;10273&quot; &quot;10274&quot; &quot;10275&quot; &quot;10276&quot; &quot;10277&quot; &quot;10278&quot; &quot;10279&quot;
+## [118] &quot;10281&quot; &quot;10285&quot; &quot;10286&quot; &quot;10292&quot; &quot;11001&quot; &quot;11004&quot; &quot;11005&quot; &quot;11040&quot; &quot;11096&quot;
+## [127] &quot;11351&quot; &quot;11352&quot; &quot;11359&quot; &quot;11362&quot; &quot;11363&quot; &quot;11371&quot; &quot;11380&quot; &quot;11381&quot; &quot;11386&quot;
+## [136] &quot;11405&quot; &quot;11411&quot; &quot;11412&quot; &quot;11413&quot; &quot;11414&quot; &quot;11416&quot; &quot;11417&quot; &quot;11419&quot; &quot;11420&quot;
+## [145] &quot;11421&quot; &quot;11422&quot; &quot;11423&quot; &quot;11424&quot; &quot;11425&quot; &quot;11427&quot; &quot;11428&quot; &quot;11429&quot; &quot;11430&quot;
+## [154] &quot;11431&quot; &quot;11433&quot; &quot;11436&quot; &quot;11439&quot; &quot;11451&quot; &quot;11499&quot; &quot;11559&quot; &quot;11580&quot; &quot;11690&quot;
+## [163] &quot;11694&quot; &quot;11695&quot; &quot;11697&quot; &quot;10302&quot; &quot;10307&quot; &quot;10309&quot; &quot;10310&quot; &quot;10311&quot; &quot;10313&quot;</code></pre>
+<pre class="r"><code>examples_meta_only &lt;- zip %&gt;%
+  semi_join(zips_only_in_meta, by = &quot;zip&quot;) %&gt;%
+  distinct(zip, borough, county, neighborhood) %&gt;%
+  arrange(zip)
+
+head(examples_meta_only, 10)</code></pre>
+<pre><code>## # A tibble: 10 × 4
+##    zip   borough   county   neighborhood       
+##    &lt;chr&gt; &lt;chr&gt;     &lt;chr&gt;    &lt;chr&gt;              
+##  1 10008 Manhattan New York &lt;NA&gt;               
+##  2 10020 Manhattan New York Chelsea and Clinton
+##  3 10041 Manhattan New York &lt;NA&gt;               
+##  4 10043 Manhattan New York &lt;NA&gt;               
+##  5 10045 Manhattan New York &lt;NA&gt;               
+##  6 10047 Manhattan New York &lt;NA&gt;               
+##  7 10048 Manhattan New York &lt;NA&gt;               
+##  8 10055 Manhattan New York &lt;NA&gt;               
+##  9 10072 Manhattan New York &lt;NA&gt;               
+## 10 10080 Manhattan New York &lt;NA&gt;</code></pre>
+<p>There are 171 zip codes that only appear in the Zip code dataset.
+Reasons may include: 1. Some ZIP codes may cover government facilities,
+parks, or campuses etc. with no market rental activity. 2. A ZIP that
+overlaps multiple neighborhoods or has ambiguous residential coverage
+can be excluded.</p>
 <p>Rental prices fluctuated dramatically during the COVID-19 pandemic.
 For all available ZIP codes, compare rental prices in January 2021 to
 prices in January 2020. Make a table that shows the 10 ZIP codes (along
 with the borough and neighborhood) with largest drop in price from
 January 2020 to 2021. Comment.</p>
+<pre class="r"><code>jan_drop &lt;- zori_zip %&gt;%
+  filter(month(date) == 1, year(date) %in% c(2020, 2021)) %&gt;%
+  mutate(yr = year(date)) %&gt;%
+  select(zip, borough, neighborhood, yr, zori) %&gt;%
+  distinct() %&gt;%
+  pivot_wider(names_from = yr, values_from = zori, names_prefix = &quot;zori_&quot;) %&gt;%
+  filter(!is.na(zori_2020), !is.na(zori_2021)) %&gt;%
+  mutate(change_2021_vs_2020 = zori_2021 - zori_2020) %&gt;%
+  arrange(change_2021_vs_2020) %&gt;%    
+  slice_head(n = 10)</code></pre>
+<p>The 10 largest drops are all in Manhattan, concentrated in Lower
+Manhattan, Lower East Side, Gramercy/Murray Hill, and Greenwich
+Village/SoHo.</p>
 </div>
 
 
